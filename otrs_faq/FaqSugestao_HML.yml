@@ -1,0 +1,82 @@
+---
+# Web service do Znuny que avisa o servico otrs-faq (app-ti) a cada CHAMADO NOVO nas filas
+# TI::*. O servico sugere artigos da FAQ e chamados parecidos ja resolvidos e posta o
+# cartao no canal do Teams da fila (Infraestrutura, BI, Sistemas ou o geral).
+# Molde: TeamsChat_Captura_HML.yml. Importar no HML ANTES da prod.
+#
+# NAO versionar o token real: troque TROCAR-TOKEN-DO-SERVICO pelo valor de HOOK_TOKEN em
+# ~/hermes-docker/.otrs-faq.env (app-ti) so na copia que for importada.
+# Host: o HML (192.168.1.221) esta na mesma LAN do app-ti (192.168.1.251). Para a PROD
+# (AWS) o app-ti precisa ser alcancavel a partir da VPC; validar a rota antes.
+#
+# Importar (como o TeamsChat): copiar para /tmp do servidor e rodar
+#   sudo -u znuny /opt/znuny/bin/znuny.Console.pl Admin::WebService::Add --name FaqSugestao --source-path /tmp/FaqSugestao.yml
+# depois remover o arquivo de /tmp.
+Debugger:
+  DebugThreshold: debug
+  TestMode: '0'
+Description: Sugestao de FAQ e chamados parecidos para chamado novo (servico otrs-faq no app-ti)
+FrameworkVersion: 7.0.x git
+Provider:
+  Transport:
+    Type: ''
+RemoteSystem: ''
+Requester:
+  Invoker:
+    NovoChamadoFaq:
+      Description: Envia o chamado novo ao servico otrs-faq
+      Events:
+      - Asynchronous: '1'
+        Event: TicketCreate
+        Condition:
+          ConditionLinking: and
+          Condition:
+            '1':
+              Type: and
+              Fields:
+                Queue:
+                  Type: Regexp
+                  Match: '^TI::'
+      MappingOutbound:
+        Config:
+          DataInclude: []
+          Template: |
+            <?xml version="1.0" encoding="UTF-8"?>
+            <xsl:transform version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+              <xsl:output method="xml" encoding="utf-8" indent="yes"/>
+              <xsl:template match="RootElement">
+                <xsl:copy>
+                  <TicketID><xsl:call-template name="V"><xsl:with-param name="v" select="//Ticket/TicketID"/></xsl:call-template></TicketID>
+                  <TicketNumber><xsl:call-template name="V"><xsl:with-param name="v" select="//Ticket/TicketNumber"/></xsl:call-template></TicketNumber>
+                  <Title><xsl:call-template name="V"><xsl:with-param name="v" select="//Ticket/Title"/></xsl:call-template></Title>
+                  <Queue><xsl:call-template name="V"><xsl:with-param name="v" select="//Ticket/Queue"/></xsl:call-template></Queue>
+                  <Service><xsl:call-template name="V"><xsl:with-param name="v" select="//Ticket/Service"/></xsl:call-template></Service>
+                  <Type><xsl:call-template name="V"><xsl:with-param name="v" select="//Ticket/Type"/></xsl:call-template></Type>
+                  <Body><xsl:call-template name="V"><xsl:with-param name="v" select="//Article/Body"/></xsl:call-template></Body>
+                </xsl:copy>
+              </xsl:template>
+              <!-- Elemento vazio vira {} no JSON; usa "-" -->
+              <xsl:template name="V">
+                <xsl:param name="v"/>
+                <xsl:choose>
+                  <xsl:when test="string($v) != ''"><xsl:value-of select="$v"/></xsl:when>
+                  <xsl:otherwise>-</xsl:otherwise>
+                </xsl:choose>
+              </xsl:template>
+            </xsl:transform>
+        Type: XSLT
+      Type: Ticket::Generic
+  Transport:
+    Config:
+      AdditionalHeaders:
+        X-Hook-Token: TROCAR-TOKEN-DO-SERVICO
+      ContentType: JSON
+      DefaultCommand: POST
+      Host: http://192.168.1.251:8095
+      InvokerControllerMapping:
+        NovoChamadoFaq:
+          Command: POST
+          Controller: /hook
+      SSLNoHostnameVerification: '0'
+      Timeout: '30'
+    Type: HTTP::REST
